@@ -18,14 +18,14 @@ from kombu.utils import cached_property, retry_over_time
 from celery import states
 from celery.canvas import maybe_signature
 from celery.exceptions import ChordError, ImproperlyConfigured
-from celery.utils import strtobool
+from celery.utils.serialization import strtobool
 from celery.utils.log import get_logger
-from celery.utils.timeutils import humanize_seconds
 
 from celery.backends.base import KeyValueStoreBackend
 
 # try:
 from rediscluster.client import RedisCluster
+
 # from kombu.transport.redis import get_redis_error_classes
 # except ImportError:                 # pragma: no cover
 #    RedisCluster = None                    # noqa
@@ -40,6 +40,26 @@ the Redis result store backend."""
 
 logger = get_logger(__name__)
 error = logger.error
+
+
+def pluralize(n, text, suffix='s'):
+    if n > 1:
+        return text + suffix
+    return text
+
+
+def humanize_seconds(secs, prefix='', sep='', now='now'):
+    TIME_UNITS = (('day', 60 * 60 * 24.0, lambda n: format(n, '.2f')),
+                  ('hour', 60 * 60.0, lambda n: format(n, '.2f')),
+                  ('minute', 60.0, lambda n: format(n, '.2f')),
+                  ('second', 1.0, lambda n: format(n, '.2f')))
+    secs = float(secs)
+    for unit, divider, formatter in TIME_UNITS:
+        if secs >= divider:
+            w = secs / divider
+            return '{0}{1}{2} {3}'.format(prefix, sep, formatter(w),
+                                          pluralize(w, unit))
+    return now
 
 
 class RedisClusterBackend(KeyValueStoreBackend):
@@ -167,12 +187,12 @@ class RedisClusterBackend(KeyValueStoreBackend):
         jkey = self.get_key_for_group(gid, '.j')
         tkey = self.get_key_for_group(gid, '.t')
         result = self.encode_result(result, state)
-        _, readycount, totaldiff, _, _ = client.pipeline()              \
-            .rpush(jkey, self.encode([1, tid, state, result]))          \
-            .llen(jkey)                                                 \
-            .get(tkey)                                                  \
-            .expire(jkey, 86400)                                        \
-            .expire(tkey, 86400)                                        \
+        _, readycount, totaldiff, _, _ = client.pipeline() \
+            .rpush(jkey, self.encode([1, tid, state, result])) \
+            .llen(jkey) \
+            .get(tkey) \
+            .expire(jkey, 86400) \
+            .expire(tkey, 86400) \
             .execute()
 
         totaldiff = int(totaldiff or 0)
@@ -182,10 +202,10 @@ class RedisClusterBackend(KeyValueStoreBackend):
             total = callback['chord_size'] + totaldiff
             if readycount == total:
                 decode, unpack = self.decode, self._unpack_chord_result
-                resl, _, _ = client.pipeline()  \
-                    .lrange(jkey, 0, total)     \
-                    .delete(jkey)               \
-                    .delete(tkey)               \
+                resl, _, _ = client.pipeline() \
+                    .lrange(jkey, 0, total) \
+                    .delete(jkey) \
+                    .delete(tkey) \
                     .execute()
                 try:
                     callback.delay([unpack(tup, decode) for tup in resl])
@@ -213,12 +233,13 @@ class RedisClusterBackend(KeyValueStoreBackend):
 
     def __reduce__(self, args=(), kwargs={}):
         return super(RedisClusterBackend, self).__reduce__(
-            (self.conn_params['startup_nodes'], ), {'expires': self.expires},
+            (self.conn_params['startup_nodes'],), {'expires': self.expires},
         )
 
 
 if __name__ == '__main__':
     from celery import Celery
+
 
     class Config:
         CELERY_ENABLE_UTC = True
@@ -228,6 +249,7 @@ if __name__ == '__main__':
             {"host": "195.175.249.98", "port": "6379"},
             {"host": "195.175.249.99", "port": "6380"}
         ]}
+
 
     app = Celery()
     app.config_from_object(Config)
